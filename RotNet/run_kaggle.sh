@@ -5,12 +5,12 @@ set -e
 
 # Define paths and arguments
 DATA_PATH="/cluster/tufts/cs152l3dclass/ljain01"
-RESULT_DIR="./results"         # Directory to save results
+RESULT_DIR="./results1"         # Directory to save results
 ARCH="resnet18"               # Default architecture
-BATCH_SIZE=10                # Batch size
-EPOCHS=300                    # Total epochs
+BATCH_SIZE=64                # Batch size
+EPOCHS=200                    # Total epochs
 LEARNING_RATE=0.03            # Learning rate
-WORKERS=2                     # Number of data loader workers
+WORKERS=8                     # Number of data loader workers
 SEED_START=0                  # Starting seed
 SEED_END=5                    # Ending seed
 LOW_DIM=128                   # Feature dimension

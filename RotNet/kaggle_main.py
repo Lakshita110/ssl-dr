@@ -88,8 +88,6 @@ def main():
     global args, best_prec1
     args = parser.parse_args()
     
-    print("args.multitask", args.multitask)
-
     my_whole_seed = 111
     random.seed(my_whole_seed)
     np.random.seed(my_whole_seed)
@@ -104,6 +102,8 @@ def main():
     for kk_time in range(args.seedstart, args.seedend):
         args.seed = kk_time
         args.result = args.result + str(args.seed)
+        result_dir = f"{args.result}/lr_{args.lr}_wd_{args.weight_decay}_seed_{args.seed}"
+        os.makedirs(result_dir, exist_ok=True)
 
         # create model
         model = models.__dict__[args.arch](low_dim=args.low_dim, multitask=args.multitask , showfeature=args.showfeature, args = args)
@@ -116,7 +116,7 @@ def main():
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
 
-        aug = transforms.Compose([transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
+        aug = transforms.Compose([transforms.RandomResizedCrop((224, 224), scale=(0.6, 1.)),
                                   transforms.RandomGrayscale(p=0.2),
                                   transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
                                   transforms.RandomHorizontalFlip(),
@@ -136,7 +136,7 @@ def main():
         #                           transforms.ToTensor(),
         #                             normalize])
         aug_test = transforms.Compose([
-                transforms.Resize(224),
+                transforms.Resize((224, 224)),
                 transforms.ToTensor(),
                 normalize])
 
@@ -150,6 +150,10 @@ def main():
         valid_dataset = medicaldata.traindataset(root="/cluster/tufts/cs152l3dclass/areddy05/IDRID/Images", transform=aug_test, train=False, args=args)
         val_loader = torch.utils.data.DataLoader(
             valid_dataset, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=2, worker_init_fn=random.seed(my_whole_seed))
+        
+        test_dataset = medicaldata.traindataset(root="/cluster/tufts/cs152l3dclass/areddy05/IDRID/Images", transform=aug_test, train=False, test=True, args=args)
+        test_loader = torch.utils.data.DataLoader(
+            test_dataset, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=2, worker_init_fn=random.seed(my_whole_seed))
 
         # define lemniscate and loss function (criterion)
         ndata = train_dataset.__len__()
@@ -192,8 +196,7 @@ def main():
             return
 
         # mkdir result folder and tensorboard
-        os.makedirs(args.result, exist_ok=True)
-        writer = SummaryWriter("runs/" + str(args.result.split("/")[-1]))
+        writer = SummaryWriter(f"runs/{os.path.basename(result_dir)}")
         writer.add_text('Text', str(args))
 
         for epoch in range(args.start_epoch, args.epochs):
@@ -201,34 +204,18 @@ def main():
             writer.add_scalar("lr", lr, epoch)
 
             # train for one epoch
-            print(args.multitask)
             loss = train(train_loader, model, lemniscate, local_lemniscate, criterion, cls_criterion, optimizer, epoch, writer)
             writer.add_scalar("train_loss", loss, epoch)
 
-            # gap_int = 10
-            # if (epoch) % gap_int == 0:
-            #     knn_num = 100
-            #     auc, acc, precision, recall, f1score = kNN(args, model, lemniscate, train_loader, val_loader, knn_num, args.nce_t, 2)
-            #     writer.add_scalar("test_auc", auc, epoch)
-            #     writer.add_scalar("test_acc", acc, epoch)
-            #     writer.add_scalar("test_precision", precision, epoch)
-            #     writer.add_scalar("test_recall", recall, epoch)
-            #     writer.add_scalar("test_f1score", f1score, epoch)
-            #
-            #     auc, acc, precision, recall, f1score = kNN(args, model, lemniscate, train_loader, val_loader_gon,
-            #                                                knn_num, args.nce_t, 2)
-            #     writer.add_scalar("gon/test_auc", auc, epoch)
-            #     writer.add_scalar("gon/test_acc", acc, epoch)
-            #     writer.add_scalar("gon/test_precision", precision, epoch)
-            #     writer.add_scalar("gon/test_recall", recall, epoch)
-            #     writer.add_scalar("gon/test_f1score", f1score, epoch)
-            #     auc, acc, precision, recall, f1score = kNN(args, model, lemniscate, train_loader, val_loader_pm,
-            #                                                knn_num, args.nce_t, 2)
-            #     writer.add_scalar("pm/test_auc", auc, epoch)
-            #     writer.add_scalar("pm/test_acc", acc, epoch)
-            #     writer.add_scalar("pm/test_precision", precision, epoch)
-            #     writer.add_scalar("pm/test_recall", recall, epoch)
-            #     writer.add_scalar("pm/test_f1score", f1score, epoch)
+            gap_int = 1
+            if (epoch) % gap_int == 0:
+                knn_num = 100
+                auc, acc, precision, recall, f1score = kNN(args, model, lemniscate, train_loader, val_loader, knn_num, args.nce_t, 2)
+                writer.add_scalar("test_auc", auc, epoch)
+                writer.add_scalar("test_acc", acc, epoch)
+                writer.add_scalar("test_precision", precision, epoch)
+                writer.add_scalar("test_recall", recall, epoch)
+                writer.add_scalar("test_f1score", f1score, epoch)
 
             # save checkpoint
             save_checkpoint({
@@ -241,8 +228,6 @@ def main():
 
 
 def train(train_loader, model, lemniscate, local_lemniscate, criterion, cls_criterion, optimizer, epoch, writer):
-    print("train")
-    print("args.multitask", args.multitask)
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -255,10 +240,6 @@ def train(train_loader, model, lemniscate, local_lemniscate, criterion, cls_crit
     optimizer.zero_grad()
 
     for i, (input, target, index, name) in enumerate(train_loader):
-        # print("input.shape", input.shape)
-        # print("target.shape", target.shape)
-        # print("target", target)
-        # print("target[1].shape", target[1].shape)
         # measure data loading time
         data_time.update(time.time() - end)
 

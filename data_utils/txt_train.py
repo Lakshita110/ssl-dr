@@ -1,8 +1,8 @@
 import os
 
 # Directory containing the images
-image_dir = "/cluster/tufts/cs152l3dclass/areddy05/IDRID/Images/Training/"
-output_file = os.path.join(image_dir, "train.txt")
+image_dir = "/cluster/tufts/cs152l3dclass/areddy05/IDRID/Images/Testing/"
+output_file = os.path.join(image_dir, "test.txt")
 
 # Get all image filenames in the directory
 image_files = [f for f in os.listdir(image_dir) if os.path.isfile(os.path.join(image_dir, f))]

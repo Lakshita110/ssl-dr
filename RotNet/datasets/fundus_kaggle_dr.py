@@ -7,7 +7,7 @@ from torchvision import transforms
 
 class traindataset(data.Dataset):
 
-    def __init__(self, root, transform=None, train=True, args=None):
+    def __init__(self, root, transform=None, train=True, test=False, args=None):
         """
         Args:
             root (str): Root directory containing the dataset.
@@ -21,6 +21,7 @@ class traindataset(data.Dataset):
         self.train = train
         self.multitask = args.multitask
         self.multiaug = args.multiaug
+        self.test = test
 
         if self.train:
             # Load training data paths
@@ -33,7 +34,21 @@ class traindataset(data.Dataset):
             self.train_dataset = self.train_dataset[:500]
             self.targets = self.targets[:500]
             self.rotation_label = self.rotation_label[:500]
-    
+        elif self.test:
+            self.train_dataset = []
+            self.targets = []
+            self.name = []
+            
+            # Load test data
+            test_path = os.path.join(self.root_dir, "Testing/test.txt")
+            label_file = os.path.join(self.root_dir, "Testing/image_labels.txt")
+            test_paths = list(np.genfromtxt(test_path, dtype=str))
+            test_labels = np.loadtxt(label_file, dtype='uint8')
+
+            for i in range(len(test_paths)):
+                self.train_dataset.append(os.path.join(self.root_dir, "Testing", test_paths[i]))
+                self.targets.append(test_labels[i])
+                self.name.append(test_paths[i])
         else:
             self.train_dataset = []
             self.targets = []
