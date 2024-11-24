@@ -16,10 +16,7 @@ class traindataset(data.Dataset):
             args (Namespace): Additional arguments for multitask, augmentation, etc.
         """
         self.root_dir = root
-        self.transform = transforms.Compose([
-            transforms.Resize((320, 320)),  # Resize images to 320x320
-            transforms.ToTensor(),          # Convert to PyTorch tensor
-        ])
+        self.transform = transform
         self.name = []
         self.train = train
         self.multitask = args.multitask
@@ -76,16 +73,16 @@ class traindataset(data.Dataset):
         if self.transform:
             img1 = self.transform(img)
             
-            # if self.train and self.multiaug:
-            #     img2 = self.transform(img)
-            #     images = [img1, img2]
+            if self.train and self.multiaug:
+                img2 = self.transform(img)
+                images = [img1, img2]
                 
-            #     if self.multitask:
-            #         targets = [target, self.rotation_labels[idx]]
-            #     else:
-            #         targets = target
+                if self.multitask:
+                    targets = [target, self.rotation_label[idx]]
+                else:
+                    targets = target
                     
-            #     return images, targets, idx, 0
+                return images, targets, idx, 0
             
             return img1, target, idx, 0
         

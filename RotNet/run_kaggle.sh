@@ -24,7 +24,7 @@ RESUME_CHECKPOINT=""          # Path to checkpoint file if resuming
 # Additional flags (adjust as needed)
 EVALUATE=""                   # Add `--evaluate` if you want to evaluate only
 SYNTHESIS_FLAG=""             # Add `--synthesis` to enable synthesis
-MULTIAUG_FLAG="--multitask"              # Add `--multiaug` to enable multi-augmentation
+MULTIAUG_FLAG="--multitask --multiaug"              # Add `--multiaug` to enable multi-augmentation
 DOMAIN_FLAG=""                # Add `--domain` to enable domain-based multitasking
 
 # Construct the Python command

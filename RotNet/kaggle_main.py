@@ -255,56 +255,51 @@ def train(train_loader, model, lemniscate, local_lemniscate, criterion, cls_crit
     optimizer.zero_grad()
 
     for i, (input, target, index, name) in enumerate(train_loader):
+        # print("input.shape", input.shape)
+        # print("target.shape", target.shape)
+        # print("target", target)
+        # print("target[1].shape", target[1].shape)
         # measure data loading time
         data_time.update(time.time() - end)
 
         # compute output
         if args.multitask:
-            # Check if input is a list (multiple augmentations) or single tensor
-            if isinstance(input, list):
-                # If input is a list of tensors, concatenate them
-                input = torch.cat([aug.cuda() for aug in input], 0)
-                index = torch.cat([index, index], 0).cuda()
-                rotation_label = torch.cat([target[1], target[1]], 0).cuda()
-            else:
-                # If input is a single tensor, just move it to cuda
-                input = input.cuda()
-                index = index.cuda()
-                rotation_label = target[1].cuda() if isinstance(target, list) else target.cuda()
+            input = torch.cat(input, 0).cuda()
+            index = torch.cat([index, index], 0).cuda()
+            rotation_label = torch.cat([target[1], target[1]], 0).cuda()
 
-            # initialize tensors for rotations
-            current_batch_size = input.size(0)
-            
-            # construct rotated versions
+            # initialize tensors
+            tensors = {}
+            tensors['dataX'] = torch.FloatTensor()
+            tensors['index'] = torch.LongTensor()
+            tensors['index_index'] = torch.LongTensor()
+            tensors['labels'] = torch.LongTensor()
+
+
+            # construct rotated input
+            tensors['dataX'].resize_(input.size()).copy_(input)
             dataX_90 = torch.flip(torch.transpose(input, 2, 3), [2])
             dataX_180 = torch.flip(torch.flip(input, [2]), [3])
             dataX_270 = torch.transpose(torch.flip(input, [2]), 2, 3)
-            
-            # Stack all rotated versions
-            dataX = torch.cat([input, dataX_90, dataX_180, dataX_270], dim=0)
-            
-            # Create rotation labels (0,1,2,3 for 0,90,180,270 degrees)
-            rotation_labels = torch.cat([
-                torch.zeros(current_batch_size),
-                torch.ones(current_batch_size),
-                2 * torch.ones(current_batch_size),
-                3 * torch.ones(current_batch_size)
-            ]).long().cuda()
-            
-            # Repeat indices for each rotation
-            indices = torch.cat([index] * 4)
+            dataX = torch.stack([input, dataX_90, dataX_180, dataX_270], dim=1)
+            batch_size, rotations, channels, height, width = dataX.size()
+            dataX = dataX.view([batch_size * rotations, channels, height, width])
 
-            # Forward pass
-            feature, pred_rot, feature_whole = model(dataX)
+            # construct rotated label and index
+            rotation_label = torch.stack([rotation_label, torch.ones_like(rotation_label), 2*torch.ones_like(rotation_label), 3*torch.ones_like(rotation_label)], dim=1)
+            rotation_label = rotation_label.view([batch_size*rotations])
+            index = torch.stack([index, index, index, index], dim=1)
+            index = index.view([batch_size * rotations])
 
-            # Compute losses
-            loss_instance = criterion(feature, indices) / args.iter_size
-            loss_cls = cls_criterion(pred_rot, rotation_labels)
-            loss = loss_instance + 1.0 * loss_cls  # 1.0 is the weight for rotation loss
+
+            feature, pred_rot, feture_whole = model(dataX)
+
+            loss_instance = criterion(feature, index) / args.iter_size
+            loss_cls = cls_criterion(pred_rot, rotation_label)
+            loss =  loss_instance + 1.0 * loss_cls
 
             losses_ins.update(loss_instance.item() * args.iter_size, input.size(0))
             losses_rot.update(loss_cls.item() * args.iter_size, input.size(0))
-
         else:
             print("running single task")
             input = input.cuda()
