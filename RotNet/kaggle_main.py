@@ -1,26 +1,18 @@
 import argparse
 import os
-import sys
-import shutil
 import time
 
 import torch
 import torch.nn as nn
 import torch.nn.parallel
-import torch.backends.cudnn as cudnn
-import torch.distributed as dist
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
 
-import datasets
 import models
-import math
 import random
-from lib.NCEAverage import NCEAverage
 from lib.LinearAverage import LinearAverage
-from lib.NCECriterion import NCECriterion
 from lib.BatchAverage import BatchCriterion
 from lib.BatchAverageRot import BatchCriterionRot
 from lib.utils import AverageMeter
@@ -31,9 +23,9 @@ from lib.utils import save_checkpoint, adjust_learning_rate, accuracy
 from lib.utils import get_color_distortion, gaussian_blur
 from tensorboardX import SummaryWriter
 
-model_names = sorted(name for name in models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
+model_names = sorted(name for name in models.__dict__ if name.islower()
+                     and not name.startswith("__") 
+                     and callable(models.__dict__[name]))
 
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
@@ -42,8 +34,8 @@ parser.add_argument('data', metavar='DIR',
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18',
                     choices=model_names,
                     help='model architecture: ' +
-                        ' | '.join(model_names) +
-                        ' (default: resnet18)')
+                         ' | '.join(model_names) +
+                         ' (default: resnet18)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=300, type=int, metavar='N',
@@ -86,7 +78,6 @@ parser.add_argument("--synthesis", action="store_true")
 parser.add_argument('--showfeature', action="store_true")
 parser.add_argument('--multiaug', action="store_true")
 parser.add_argument('--multitask', action="store_true")
-parser.add_argument("--multitaskposrot", action="store_true")
 parser.add_argument('--domain', action="store_true")
 parser.add_argument("--saveembed", type=str, default="")
 
@@ -96,6 +87,8 @@ def main():
 
     global args, best_prec1
     args = parser.parse_args()
+    
+    print("args.multitask", args.multitask)
 
     my_whole_seed = 111
     random.seed(my_whole_seed)
@@ -150,25 +143,13 @@ def main():
         # dataset
         import datasets.fundus_kaggle_dr as medicaldata
         train_dataset = medicaldata.traindataset(root=args.data, transform=aug, train=True, args=args)
+        
         train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=8, drop_last=True if args.multiaug else False,  worker_init_fn=random.seed(my_whole_seed))
+            train_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=2, drop_last=True if args.multiaug else False,  worker_init_fn=random.seed(my_whole_seed), persistent_workers=True)
 
-
-        valid_dataset = medicaldata.traindataset(root=args.data, transform=aug_test, train=False, test_type="amd", args=args)
+        valid_dataset = medicaldata.traindataset(root="/cluster/tufts/cs152l3dclass/areddy05/IDRID/Images", transform=aug_test, train=False, args=args)
         val_loader = torch.utils.data.DataLoader(
-            valid_dataset, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=8, worker_init_fn=random.seed(my_whole_seed))
-        valid_dataset_gon = medicaldata.traindataset(root=args.data, transform=aug_test, train=False, test_type="gon",
-                                                 args=args)
-        val_loader_gon = torch.utils.data.DataLoader(
-            valid_dataset_gon, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=8,
-            worker_init_fn=random.seed(my_whole_seed))
-        valid_dataset_pm = medicaldata.traindataset(root=args.data, transform=aug_test, train=False, test_type="pm",
-                                                 args=args)
-        val_loader_pm = torch.utils.data.DataLoader(
-            valid_dataset_pm, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=8,
-            worker_init_fn=random.seed(my_whole_seed))
-
-
+            valid_dataset, batch_size=args.batch_size, shuffle=False, pin_memory=True, num_workers=2, worker_init_fn=random.seed(my_whole_seed))
 
         # define lemniscate and loss function (criterion)
         ndata = train_dataset.__len__()
@@ -176,7 +157,7 @@ def main():
         lemniscate = LinearAverage(args.low_dim, ndata, args.nce_t, args.nce_m).cuda()
         local_lemniscate = None
 
-        if args.multitaskposrot:
+        if args.multitask:
             print ("running multi task with positive")
             criterion = BatchCriterionRot(1, 0.1, args.batch_size, args).cuda()
         elif args.domain:
@@ -190,7 +171,6 @@ def main():
         else:
             criterion = nn.CrossEntropyLoss().cuda()
 
-
         if args.multitask:
             cls_criterion = nn.CrossEntropyLoss().cuda()
         else:
@@ -199,51 +179,29 @@ def main():
         optimizer = torch.optim.Adam(model.parameters(), args.lr,
                                      weight_decay=args.weight_decay)
 
-        # optionally resume from a checkpoint
-        if args.resume:
-            if os.path.isfile(args.resume):
-                print("=> loading checkpoint '{}'".format(args.resume))
-                checkpoint = torch.load(args.resume)
-                args.start_epoch = checkpoint['epoch']
-                model.load_state_dict(checkpoint['state_dict'])
-                lemniscate = checkpoint['lemniscate']
-                optimizer.load_state_dict(checkpoint['optimizer'])
-                print("=> loaded checkpoint '{}' (epoch {})"
-                      .format(args.resume, checkpoint['epoch']))
-            else:
-                print("=> no checkpoint found at '{}'".format(args.resume))
-
-
         if args.evaluate:
             knn_num = 100
             auc, acc, precision, recall, f1score = kNN(args, model, lemniscate, train_loader, val_loader, knn_num, args.nce_t, 2)
+            f = open("savemodels/result.txt", "a+")
+            f.write("auc: %.4f\n" % (auc))
+            f.write("acc: %.4f\n" % (acc))
+            f.write("pre: %.4f\n" % (precision))
+            f.write("recall: %.4f\n" % (recall))
+            f.write("f1score: %.4f\n" % (f1score))
+            f.close()
             return
-
-
 
         # mkdir result folder and tensorboard
         os.makedirs(args.result, exist_ok=True)
         writer = SummaryWriter("runs/" + str(args.result.split("/")[-1]))
         writer.add_text('Text', str(args))
 
-        # copy code
-        import shutil, glob
-        source = glob.glob("*.py")
-        source += glob.glob("*/*.py")
-        os.makedirs(args.result + "/code_file", exist_ok=True)
-        for file in source:
-            name = file.split("/")[0]
-            if name == file:
-                shutil.copy(file, args.result + "/code_file/")
-            else:
-                os.makedirs(args.result + "/code_file/" + name, exist_ok=True)
-                shutil.copy(file, args.result + "/code_file/" + name)
-
         for epoch in range(args.start_epoch, args.epochs):
             lr = adjust_learning_rate(optimizer, epoch, args, [100, 200])
             writer.add_scalar("lr", lr, epoch)
 
-            # # train for one epoch
+            # train for one epoch
+            print(args.multitask)
             loss = train(train_loader, model, lemniscate, local_lemniscate, criterion, cls_criterion, optimizer, epoch, writer)
             writer.add_scalar("train_loss", loss, epoch)
 
@@ -272,7 +230,7 @@ def main():
             #     writer.add_scalar("pm/test_recall", recall, epoch)
             #     writer.add_scalar("pm/test_f1score", f1score, epoch)
 
-                # save checkpoint
+            # save checkpoint
             save_checkpoint({
                 'epoch': epoch,
                 'arch': args.arch,
@@ -283,16 +241,16 @@ def main():
 
 
 def train(train_loader, model, lemniscate, local_lemniscate, criterion, cls_criterion, optimizer, epoch, writer):
+    print("train")
+    print("args.multitask", args.multitask)
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
-
     losses_ins = AverageMeter()
     losses_rot = AverageMeter()
 
     # switch to train mode
     model.train()
-
     end = time.time()
     optimizer.zero_grad()
 
@@ -302,58 +260,53 @@ def train(train_loader, model, lemniscate, local_lemniscate, criterion, cls_crit
 
         # compute output
         if args.multitask:
-            input = torch.cat(input, 0).cuda()
-            index = torch.cat([index, index], 0).cuda()
-            rotation_label = torch.cat([target[1], target[1]], 0).cuda()
+            # Check if input is a list (multiple augmentations) or single tensor
+            if isinstance(input, list):
+                # If input is a list of tensors, concatenate them
+                input = torch.cat([aug.cuda() for aug in input], 0)
+                index = torch.cat([index, index], 0).cuda()
+                rotation_label = torch.cat([target[1], target[1]], 0).cuda()
+            else:
+                # If input is a single tensor, just move it to cuda
+                input = input.cuda()
+                index = index.cuda()
+                rotation_label = target[1].cuda() if isinstance(target, list) else target.cuda()
 
-            # initialize tensors
-            tensors = {}
-            tensors['dataX'] = torch.FloatTensor()
-            tensors['index'] = torch.LongTensor()
-            tensors['index_index'] = torch.LongTensor()
-            tensors['labels'] = torch.LongTensor()
-
-
-            # construct rotated input
-            tensors['dataX'].resize_(input.size()).copy_(input)
+            # initialize tensors for rotations
+            current_batch_size = input.size(0)
+            
+            # construct rotated versions
             dataX_90 = torch.flip(torch.transpose(input, 2, 3), [2])
             dataX_180 = torch.flip(torch.flip(input, [2]), [3])
             dataX_270 = torch.transpose(torch.flip(input, [2]), 2, 3)
-            dataX = torch.stack([input, dataX_90, dataX_180, dataX_270], dim=1)
-            batch_size, rotations, channels, height, width = dataX.size()
-            dataX = dataX.view([batch_size * rotations, channels, height, width])
+            
+            # Stack all rotated versions
+            dataX = torch.cat([input, dataX_90, dataX_180, dataX_270], dim=0)
+            
+            # Create rotation labels (0,1,2,3 for 0,90,180,270 degrees)
+            rotation_labels = torch.cat([
+                torch.zeros(current_batch_size),
+                torch.ones(current_batch_size),
+                2 * torch.ones(current_batch_size),
+                3 * torch.ones(current_batch_size)
+            ]).long().cuda()
+            
+            # Repeat indices for each rotation
+            indices = torch.cat([index] * 4)
 
-            # construct rotated label and index
-            rotation_label = torch.stack([rotation_label, torch.ones_like(rotation_label), 2*torch.ones_like(rotation_label), 3*torch.ones_like(rotation_label)], dim=1)
-            rotation_label = rotation_label.view([batch_size*rotations])
-            index = torch.stack([index, index, index, index], dim=1)
-            index = index.view([batch_size * rotations])
+            # Forward pass
+            feature, pred_rot, feature_whole = model(dataX)
 
-
-            feature, pred_rot, feture_whole = model(dataX)
-
-            loss_instance = criterion(feature, index) / args.iter_size
-            loss_cls = cls_criterion(pred_rot, rotation_label)
-            loss =  loss_instance + 1.0 * loss_cls
+            # Compute losses
+            loss_instance = criterion(feature, indices) / args.iter_size
+            loss_cls = cls_criterion(pred_rot, rotation_labels)
+            loss = loss_instance + 1.0 * loss_cls  # 1.0 is the weight for rotation loss
 
             losses_ins.update(loss_instance.item() * args.iter_size, input.size(0))
             losses_rot.update(loss_cls.item() * args.iter_size, input.size(0))
 
-        elif args.multiaug:
-
-            if args.domain:
-                dataX = torch.cat(input, 0).cuda()
-                ori_data = dataX[:int(dataX.shape[0] / 2)]
-                syn_data = dataX[int(dataX.shape[0] / 2):]
-                data = [ori_data, syn_data]
-                dataX = torch.stack(data, dim=1).cuda()
-                batch_size, types, channels, height, width = dataX.size()
-                input = dataX.view([batch_size * types, channels, height, width])
-
-            # input = torch.cat(input, 0).cuda()
-            feature = model(input)
-            loss = criterion(feature, index) / args.iter_size
         else:
+            print("running single task")
             input = input.cuda()
             index = index.cuda()
 
@@ -361,13 +314,14 @@ def train(train_loader, model, lemniscate, local_lemniscate, criterion, cls_crit
             output = lemniscate(feature, index)
             loss = criterion(output, index) / args.iter_size
 
+        # backward pass
         loss.backward()
 
         # measure accuracy and record loss
         losses.update(loss.item() * args.iter_size, input.size(0))
 
         if (i+1) % args.iter_size == 0:
-            # compute gradient and do SGD step
+            # compute gradient and do optimization step
             optimizer.step()
             optimizer.zero_grad()
 
@@ -387,8 +341,6 @@ def train(train_loader, model, lemniscate, local_lemniscate, criterion, cls_crit
     writer.add_scalar("losses_rot", losses_rot.avg, epoch)
 
     return losses.avg
-
-
 
 if __name__ == '__main__':
     main()

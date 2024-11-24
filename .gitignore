@@ -1,0 +1,5 @@
+RotNet/results0/
+RotNet/runs/
+
+__pycache__/
+*.pyc
