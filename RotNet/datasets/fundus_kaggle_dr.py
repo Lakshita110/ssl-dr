@@ -31,9 +31,9 @@ class traindataset(data.Dataset):
             self.targets = [0] * len(self.train_dataset)  # No human-annotated labels for training
             self.rotation_label = [0] * len(self.train_dataset)
             
-            self.train_dataset = self.train_dataset[:500]
-            self.targets = self.targets[:500]
-            self.rotation_label = self.rotation_label[:500]
+            self.train_dataset = self.train_dataset[:5000]
+            self.targets = self.targets[:5000]
+            self.rotation_label = self.rotation_label[:5000]
         elif self.test:
             self.train_dataset = []
             self.targets = []

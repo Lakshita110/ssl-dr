@@ -210,7 +210,7 @@ def main():
             gap_int = 1
             if (epoch) % gap_int == 0:
                 knn_num = 100
-                auc, acc, precision, recall, f1score = kNN(args, model, lemniscate, train_loader, val_loader, knn_num, args.nce_t, 2)
+                auc, acc, precision, recall, f1score = kNN(args, model, lemniscate, val_loader, test_loader, knn_num, args.nce_t, 2)
                 writer.add_scalar("test_auc", auc, epoch)
                 writer.add_scalar("test_acc", acc, epoch)
                 writer.add_scalar("test_precision", precision, epoch)
